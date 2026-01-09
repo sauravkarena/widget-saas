@@ -1,0 +1,376 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum GlobalRole {
+  SUPERADMIN
+  USER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum CompanyStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum CompanyRole {
+  OWNER
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+enum WidgetStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  SCHEDULED
+  EXPIRED
+  ARCHIVED
+}
+
+enum WidgetType {
+  ANNOUNCEMENT_BAR  // Top/bottom static bar with rotating messages
+  NOTIFICATION      // Toast-style notifications (sequential)
+  POPUP_MODAL       // Center modal overlay
+  SLIDE_IN          // Slide-in panel from left/right
+  FLOATING_BUTTON   // Persistent floating button
+  BANNER            // Full-width hero banner with image
+}
+
+enum WidgetPosition {
+  // Full-width positions (for ANNOUNCEMENT_BAR, BANNER)
+  TOP
+  BOTTOM
+
+  // Corner positions (for NOTIFICATION, FLOATING_BUTTON)
+  TOP_LEFT
+  TOP_RIGHT
+  BOTTOM_LEFT
+  BOTTOM_RIGHT
+
+  // Side positions (for SLIDE_IN)
+  LEFT_CENTER
+  RIGHT_CENTER
+
+  // Center positions (for POPUP_MODAL)
+  CENTER
+  CENTER_LEFT
+  CENTER_RIGHT
+
+  // Floating positions
+  FLOATING_TOP
+  FLOATING_BOTTOM
+  FLOATING_CENTER
+}
+
+// ============================================
+// USER & AUTH
+// ============================================
+
+model User {
+  id            String     @id @default(cuid())
+  email         String     @unique
+  emailVerified DateTime?
+  passwordHash  String?
+  name          String?
+  image         String?
+  globalRole    GlobalRole @default(USER)
+  status        UserStatus @default(ACTIVE)
+
+  memberships    CompanyMember[]
+  createdWidgets Widget[]        @relation("CreatedBy")
+  updatedWidgets Widget[]        @relation("UpdatedBy")
+  accounts       Account[]
+  sessions       Session[]
+  package        UserPackage?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  lastLoginAt DateTime?
+
+  @@index([email])
+  @@index([globalRole])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ============================================
+// COMPANY
+// ============================================
+
+model Company {
+  id      String  @id @default(cuid())
+  name    String
+  slug    String  @unique
+  logo    String?
+  website String?
+
+  status CompanyStatus @default(ACTIVE)
+
+  members   CompanyMember[]
+  widgets   Widget[]
+  domains   AllowedDomain[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([slug])
+}
+
+model CompanyMember {
+  id        String      @id @default(cuid())
+  userId    String
+  companyId String
+  role      CompanyRole @default(VIEWER)
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  invitedAt   DateTime  @default(now())
+  acceptedAt  DateTime?
+  inviteToken String?   @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, companyId])
+  @@index([companyId])
+  @@index([userId])
+}
+
+model AllowedDomain {
+  id        String  @id @default(cuid())
+  companyId String
+  domain    String
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([companyId, domain])
+  @@index([domain])
+}
+
+// ============================================
+// WIDGET
+// ============================================
+
+model Widget {
+  id        String @id @default(cuid())
+  publicKey String @unique @default(cuid())
+  companyId String
+
+  name   String
+  type   WidgetType   @default(NOTIFICATION) // Changed default to NOTIFICATION
+  status WidgetStatus @default(DRAFT)
+
+  // Content (JSON) - Structure varies by type
+  content Json
+  // For ANNOUNCEMENT_BAR, NOTIFICATION, BANNER:
+  // {
+  //   "items": [
+  //     {
+  //       "headline": "...",
+  //       "body": "...",
+  //       "ctaText": "Learn More",
+  //       "ctaUrl": "https://...",
+  //       "image": "https://..." (for BANNER)
+  //     }
+  //   ]
+  // }
+  //
+  // For POPUP_MODAL, SLIDE_IN:
+  // {
+  //   "headline": "...",
+  //   "body": "...",
+  //   "ctaText": "...",
+  //   "ctaUrl": "...",
+  //   "image": "..."
+  // }
+  //
+  // For FLOATING_BUTTON:
+  // {
+  //   "buttonText": "Help",
+  //   "buttonIcon": "💬",
+  //   "expandedContent": {
+  //     "headline": "...",
+  //     "body": "...",
+  //     "ctaText": "...",
+  //     "ctaUrl": "..."
+  //   }
+  // }
+
+  // Styling (JSON)
+  style Json?
+  // {
+  //   "backgroundColor": "#3B82F6",
+  //   "textColor": "#FFFFFF",
+  //   "borderRadius": "8px",
+  //   "buttonStyle": "rounded" (for FLOATING_BUTTON)
+  // }
+
+  position WidgetPosition @default(BOTTOM_RIGHT)
+
+  // Scheduling
+  startAt  DateTime?
+  endAt    DateTime?
+  timezone String    @default("UTC")
+
+  // Display Rules (JSON)
+  displayRules Json?
+  // {
+  //   "devices": { "mobile": true, "desktop": true },
+  //   "frequency": "once" | "always" | "daily",
+  //   "delay": 0,
+  //   "pageRules": {
+  //     "urls": ["*"],
+  //     "excludeUrls": []
+  //   }
+  // }
+
+  dismissible     Boolean @default(true)
+  
+  // autoHideSeconds meaning changes by type:
+  // - NOTIFICATION: delay after all toasts shown before loop restart
+  // - ANNOUNCEMENT_BAR/BANNER: time between message rotations
+  // - POPUP_MODAL: auto-close after X seconds
+  // - SLIDE_IN: auto-close after X seconds
+  // - FLOATING_BUTTON: N/A (always visible)
+  autoHideSeconds Int?    @default(10)
+
+  company     Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdById String
+  createdBy   User    @relation("CreatedBy", fields: [createdById], references: [id])
+  updatedById String?
+  updatedBy   User?   @relation("UpdatedBy", fields: [updatedById], references: [id])
+
+  analytics WidgetAnalytics[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  publishedAt DateTime?
+
+  @@index([publicKey])
+  @@index([companyId])
+  @@index([status])
+  @@index([type])
+}
+
+// ============================================
+// ANALYTICS
+// ============================================
+
+model WidgetAnalytics {
+  id       String @id @default(cuid())
+  widgetId String
+
+  eventType String // impression, click, dismiss, cta_click, expand (for FLOATING_BUTTON)
+  date      DateTime @db.Date
+  hour      Int?
+  count     Int      @default(1)
+
+  country String?
+  device  String?
+  browser String?
+
+  widget Widget @relation(fields: [widgetId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([widgetId, eventType, date, hour, country, device])
+  @@index([widgetId])
+  @@index([date])
+}
+
+// ============================================
+// SUBSCRIPTION / PACKAGES
+// ============================================
+
+model Package {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  slug        String  @unique
+  description String?
+  
+  maxWidgets    Int @default(3)
+  maxCompanies  Int @default(1)
+  
+  price         Decimal @default(0) @db.Decimal(10, 2)
+  billingCycle  String  @default("monthly")
+  
+  isActive      Boolean @default(true)
+  
+  users         UserPackage[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([slug])
+  @@index([isActive])
+}
+
+model UserPackage {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  packageId String
+  
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  package Package @relation(fields: [packageId], references: [id])
+  
+  startedAt   DateTime  @default(now())
+  expiresAt   DateTime?
+  isActive    Boolean   @default(true)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([packageId])
+}
